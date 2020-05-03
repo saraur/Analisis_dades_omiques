@@ -1,0 +1,1039 @@
+---
+title: '<br> <br> <br> <br> PAC 1: Análisis de datos Ómicos'
+author: "Sara Urquizu Rojo"
+output:
+  pdf_document:
+    toc: TRUE
+
+---
+
+## Abstract
+
+En este estudio, se pretende encontrar una relación entre la afectación de ciertos productos (solución salina y ácido láctico) en la piel sensible en comparación con la piel normal. Para ello se ha realizado un análisis de arrays de las muestras con un posterior análisis bioinformático de los datos donde se ha visto que los genes diferencialmente expresados son solo unos pocos del total, los que participan en el movimiento contraccional de los músculos y algunos receptores de la piel.
+
+
+## Objetivo
+
+El objetivo principal de este estudio es descubrir que efectos tienen ciertos productos irritables para la piel, en perfiles de pieles más sensibles.
+
+## Materiales y métodos
+
+El experimento tiene 12 muestras. Los datos de este experimento se obtuvieron de 18 voluntarios sanos, la mitad de ellos con piel sensible y la otra mitad con piel no sensible. Se cogieron dos muestras de cada unidad experimental, una con una aplicación de una solución salina y la otra con una exposición al ácido láctico. Las 36 muestras resultantes se han dividido en grupos de 3 individuos cada una, obteniendo:
+
+- 3 sets de muestras de _piel no sensible con aplicación de una solución salina normal_.
+
+- 3 sets de muestras de _piel no sensible con aplicación de ácido láctico_.
+
+- 3 sets de muestras de _piel sensible con aplicación de una solución salina normal_.
+
+- 3 sets de muestras de _piel sensible con aplicación de ácido láctico_.
+
+Así pues, este estudio tiene 2 factores con dos niveles en cada uno de ellos: el tratamiento en la piel (solución salina o ácido láctico) y tipo de piel (sensible o no sensible). Para el perfil global del transcriptoma se usó “_Affymetrix Human Genome U133 Plus 2.0_”.
+
+Para el análisis de los datos se ha usado la plataforma RStudio y se ha seguido, con algunos cambios, el modelo de _Gonzalo, Ricardo y Sanchez-Pla, Alex (2019)_[1] sobre análisis estadístico de datos de microarrays.
+
+En primer lugar se han exportado a RStudio los datos en formato _.CEL_ del web de __[NCBI](https://www.ncbi.nlm.nih.gov/geo/browse/?view=series)__ usando el código "GSE48506" que es el que identifica el estudio del _Perfil de expresión génica de pieles sensibles_ de Kim et al.[2], para después clasificar y separar las muestras según el grupo y el nivel al que pertenecen.
+
+A continuación, con los datos crudos, se ha realizado un control de calidad de estos, creando un diagrama de caja conjunto para todos los sets. Con el método "Robust Multichip Analysis Irizarry et al. (2003)[3]" para la normalización de datos se ha procedido a normalizarlos. Despues de normalizarlos, se ha realizado un control de calidad, con el diagrama de caja conjunto para todos los sets y con la creación de un gráfico de distribución de variabilidad, para comprobar la bondad de la normalización. 
+
+Para identificar qué genes están diferencialmente expresados, primero se ha creado una matriz de contrastes con el paquete _limma_ y se ha realizado una estimación del modelo con el método de Benjamini y Hochberg (1995)[4] para el control sobre los falsos positivos y luego se han filtrado los genes con menos variables con el filtraje del paquete _genefilter_. A partir de la matriz obtenida, se ha creado una tabla para cada una de las comparaciones de genes (piel sensible vs piel no sensible con aplicación de una solución salina normal, piel sensible vs piel no sensible con aplicación de ácido láctico y genes con comportamientos diferentes entre las dos comparaciones anteriores) con los genes ordenados de más a menos diferencialmente expresados. Con la base de datos del paquete _hgu133plus2.db_ se han seleccionado los símbolos de los genes para poder crear un gráfico de volcán donde plasmar que genes estan más o menos diferencialmente expresados. 
+
+También se ha creando un diagrama de Venn donde se muestra el recuento del número de genes diferencialmente expresados en cada comparación.
+
+Finalmente se ha hecho un análisis de significación biológica de las dos comparaciones: las que comparan los dos tipos de piel según su tratamiento. Y se ha creado una red de relación entre los genes diferencialmente expresados en cada comparación.
+
+
+## Resultados
+
+```{r echo=FALSE, results='hide', message=FALSE, warning=FALSE}
+## OBTENCIÓN DE DATOS:
+
+# En primer lugar crearemos dos directorios, uno para los datos y otro para los resultados, tal y como recomiendan Gonzalo y Sanchez-Pla (2019) para no mezclar datos.
+dir.create("data")
+dir.create("results")
+```
+
+```{r echo=FALSE, results='hide', message=F, warning=F}
+library(GEOquery)
+library(BiocManager)
+library(knitr)
+library(colorspace)
+library(gplots)
+library(ggplot2)
+library(ggrepel)
+library(htmlTable)
+library(prettydoc)
+library(pd.hg.u133.plus.2)
+library(oligo)
+library(GEOquery)
+library(Biobase)
+```
+
+
+```{r echo=FALSE, results='hide', message=F, warning=F}
+#### 1. Identificar que grupos hay y a qué grupo pertenece cada muestra ####
+
+
+targets <- read.csv2("C:/Users/Sara/Documents/UOC/GitHub/Análisis de datos Ómicos/data/target.csv", header = TRUE, sep = ";") 
+```
+
+```{r echo=FALSE, results='hide', message=F, warning=F}
+
+library(oligo)
+
+
+# Los datos en bruto se almacenan en una variable (rawData) para poderlos tratar con el paquete "oligo" de R:
+celFiles <- list.celfiles("./data", full.names = TRUE)
+my.targets <-read.AnnotatedDataFrame(file.path("./data","target.csv"), header = TRUE, row.names = 1, sep=";") # ExpresionSet
+rawData <- read.celfiles(celFiles, phenoData = my.targets)
+# Cambiamos las etiquetas de las muestras a los "ShortNames":
+my.targets@data$ShortName->rownames(pData(rawData))
+colnames(rawData) <-rownames(pData(rawData)) 
+head(rawData)
+```
+### Control de calidad de los datos crudos: 
+
+
+```{r echo=FALSE, results='hide', message=F, warning=F}
+
+#### 2. Control de calidad de los datos crudos ####
+
+library(arrayQualityMetrics)
+library(ggplot2)
+library(ggrepel)
+```
+
+```{r echo=FALSE, results='hide', message=F, warning=F}
+# Se crea una carpeta para los resultados de "rawData":
+arrayQualityMetrics(rawData, force = TRUE)
+
+
+# Función creada por "Gonzalo, Ricardo y Sanchez-Pla, Alex (2019)" para un analisis más completo:
+plotPCA3 <- function (datos, labels, factor, title, scale,colores, size = 1.5, glineas = 0.25) {
+   data <- prcomp(t(datos),scale=scale)
+   # plot adjustments
+   dataDf <- data.frame(data$x)
+   Group <- factor
+   loads <- round(data$sdev^2/sum(data$sdev^2)*100,1)
+   # main plot
+   p1 <- ggplot(dataDf,aes(x=PC1, y=PC2)) + theme_classic() + geom_hline(yintercept = 0, color = "gray70") +
+      geom_vline(xintercept = 0, color = "gray70") + geom_point(aes(color = Group), alpha = 0.55, size = 3) +
+      coord_cartesian(xlim = c(min(data$x[,1])-5,max(data$x[,1])+5)) + scale_fill_discrete(name = "Group")
+   # avoiding labels superposition
+   p1 + geom_text_repel(aes(y = PC2 + 0.25, label = labels),segment.size = 0.25, size = size) + labs(x = c(paste("PC1",loads[1],"%")),y=c(paste("PC2",loads[2],"%"))) + ggtitle(paste("Principal Component Analysis for: ",title,sep=" ")) + theme(plot.title = element_text(hjust = 0.5)) + scale_color_manual(values=colores)
+   }
+```
+
+En primer lugar, se ha hecho un análisis con _arrayQualityMetrics_ para comprobar la calidad de las muestras. En este análisis, solo ha habido dos muestras que no podian ser consideradas totalmente de buena calidad porque se les han detectado _"outliers"_. Además, en los dos gráficos siguientes, se observa que la variabilidad de los datos es elevada, por lo que se han normalizado los datos y se ha trabajado con estos.
+
+```{r, echo=FALSE}
+# Empleamos la función "plotPCA3" para nuestro analisis:
+plotPCA3(exprs(rawData), labels = targets$ShortName, factor = targets$Group, title="Raw data", scale = FALSE, size = 3, colores = c("red", "blue", "green", "yellow"))
+```
+_Fig 1. Diagrama de dispersión de los datos crudos_
+
+
+
+
+```{r, echo=FALSE}
+# Diagrama de caja que muestra las intensidades de los arrays:
+boxplot(rawData, cex.axis=0.5, las=2,  which="all", col = c(rep("red", 3), rep("blue", 3), rep("green", 3), rep("yellow", 3)), main="Distribution of raw intensity values")
+```
+_Fig 2. Diagrama de caja conjunto con los datos crudos_
+
+
+
+En el diagrama de caja conjunto se puede ver como los datos tienen distintas medias y variabilidad.
+
+
+```{r echo=FALSE, results='hide', message=F, warning=F}
+#### 3. Normalización ####
+
+# Metodo "Robust Multichip Analysis Irizarry et al. (2003)" para la normalización:
+eset_rma <- rma(rawData)
+```
+
+### Control de calidad de los datos normalizados:
+
+
+```{r echo=FALSE, results='hide', message=F, warning=F}
+#### 4. Control de calidad de los datos normalizados #### 
+
+# Control de calidad con los datos normalizados:
+arrayQualityMetrics(eset_rma, outdir = file.path("./results", "QCDir.Norm"), force=TRUE)
+```
+
+Despues de normalizar los datos, se ha vuelto a realizar el análisis con _arrayQualityMetrics_ y todos los datos pasan el control de calidad (con la normalización se han eliminado los outliers de los dos grupos que no cumplian la calidad deseada). Con los mismos gráficos, podemos ver como ha cambiado la calidad de los datos. En este primer gráfico, se puede ver como el porcentaje de variabilidad ha disminuido con respecto al gráfico realizado con los datos sin procesar (de 51.3 % al 30 %). Aunque los grupos siguen sin seguir un esquema claro.
+
+```{r, echo=FALSE}
+plotPCA3(exprs(eset_rma), labels = targets$ShortName, factor = targets$Group, title="Normalized data", scale = FALSE, size = 3, colores = c("red", "blue", "green", "yellow"))
+```
+_Fig 3. Diagrama de dispersión de los datos normalizados_
+
+
+
+En cambio, el gráfico de caja conjunto con los datos normalizados, si muestra que todos ellos tienen una distribución muy parecida. 
+
+```{r, echo=FALSE}
+# Diagrama de caja múltiple para comprobar la normalización:
+boxplot(eset_rma, cex.axis=0.5, las=2,  which="all", col = c(rep("red", 3), rep("blue", 3), rep("green", 3), rep("yellow", 3)), main="Boxplot for arrays intensity: Normalized Data")
+```
+_Fig 4. Diagrama de caja conjunto con los datos normalizados_
+
+
+
+```{r echo=FALSE, results='hide', message=F, warning=F}
+# Distribución de la variabilidad de los genes:
+sds <- apply (exprs(eset_rma), 1, sd)
+sdsO<- sort(sds)
+```
+
+Finalmente, se ha hecho también un gráfico de las desviaciones estándar de todos los genes (ordenados de menor a mayor valor) para estimar que p-valor podemos usar. Como vemos, los que tienen mayor desviación estándar pasan del 95 %, con lo que podremos usar una p-valor del 5 %.
+
+```{r echo=FALSE}
+plot(1:length(sdsO), sdsO, main="Distribution of variability for all genes", sub="Vertical lines represent 90% and 95% percentiles", xlab="Gene index (from least to most variable)", ylab="Standard deviation")
+abline(v=length(sds)*c(0.9,0.95))
+```
+_Fig 5. Distribución de la variabilidad de los genes normalizados_
+
+ 
+ 
+
+### Filtraje no específico:
+
+
+```{r echo=FALSE, results='hide', message=F, warning=F}
+#### 5. Filtraje no específico #### 
+
+library(genefilter)
+library(mogene21sttranscriptcluster.db)
+library(AnnotationDbi)
+library(org.Mm.eg.db)
+annotation(eset_rma) <- "hgu133plus2.db"
+filtered <- nsFilter(eset_rma, 
+                     require.entrez = TRUE, remove.dupEntrez = TRUE,
+                     var.filter=TRUE, var.func=IQR, var.cutoff=0.75, 
+                     filterByQuantile=TRUE, feature.exclude = "^AFFX")
+
+
+# Para mostrar que es lo que se ha filtrado:
+print(filtered$filter.log)
+# Guardamos los datos del filtrado:
+eset_filtered <-filtered$eset
+
+write.csv(exprs(eset_rma), file="./results/normalized.Data.csv")
+write.csv(exprs(eset_filtered), file="./results/normalized.Filtered.Data.csv")
+save(eset_rma, eset_filtered, file="./results/normalized.Data.Rda")
+```
+
+Un filtraje de los genes con variabilidad aleatoria, puede mejorar los resultados, por lo que se ha procedido a un filtraje no específico de los datos con lo que nos hemos quedado con 5044 genes con los que trabajar.
+
+### Identificación de genes diferencialmente expresados:
+
+
+Para la identificación de que genes están más diferencialmente expresados, se ha creado una matriz de contrastes y se ha hecho una estimación del modelo para obtener una tabla que muestre los genes de más a menos diferencialmente expresados. 
+
+```{r echo=FALSE, results='hide', message=F, warning=F}
+#### 6. Identificación de genes diferencialmente expresados: ####
+library(limma)
+
+
+#### Matriz de contrastes:
+
+# Diseño de la matriz:
+if (!exists("eset_filtered")) load (file="./results/normalized.Data.Rda")
+
+designMat<- model.matrix(~0+Group, pData(eset_filtered))
+colnames(designMat) <- c("NOS.NS", "NOS.LA", "S.NS", "S.LA")
+print(designMat)
+```
+
+```{r echo=FALSE, results='hide', message=F, warning=F}
+# Diseño de la matriz de contrastes:
+cont.matrix <- makeContrasts (NOSvsS.NS = NOS.NS-S.NS, NOSvsS.LA = NOS.LA-S.LA, INT = (NOS.NS-S.NS) - (NOS.LA-S.LA), levels=designMat)
+print(cont.matrix)
+```
+
+```{r echo=FALSE, results='hide', message=F, warning=F}
+
+### Estimación del modelo ###
+
+library(limma)
+
+# Método de Benjamini y Hochberg Benjamini y Hochberg (1995) para el control sobre los falsos positivos:
+
+fit<-lmFit(eset_filtered, designMat)
+fit.main<-contrasts.fit(fit, cont.matrix)
+fit.main<-eBayes(fit.main)
+class(fit.main)
+
+```
+
+```{r echo=FALSE, results='hide', message=F, warning=F}
+library(limma)
+
+
+# Comparación NOSvsS.NS:
+topTab_NOSvsS.NS <- topTable (fit.main, number=nrow(fit.main), coef="NOSvsS.NS", adjust="fdr") 
+head(topTab_NOSvsS.NS)
+
+# Comparación NOSvsS.LA:
+topTab_NOSvsS.LA <- topTable (fit.main, number=nrow(fit.main), coef="NOSvsS.LA", adjust="fdr") 
+head(topTab_NOSvsS.LA)
+
+# Comparación INT:
+topTab_INT <- topTable (fit.main, number=nrow(fit.main), coef="INT", adjust="fdr") 
+head(topTab_INT)
+
+```
+
+
+```{r echo=FALSE, results='hide', message=F, warning=F}
+
+#### 7. Anotación de los resultados ####
+
+### Anotación de genes ###
+
+library(AnnotationDbi)
+library(org.Hs.eg.db)
+library(hgu133plus2.db)
+
+
+# Función que anota todo en una tabla:
+annotatedTopTable <- function(topTab, anotPackage)
+   {
+   topTab <- cbind(PROBEID=rownames(topTab), topTab)
+   myProbes <- rownames(topTab)
+   thePackage <- eval(parse(text = anotPackage))
+   geneAnots <- select(thePackage, myProbes, c("SYMBOL", "ENTREZID", "GENENAME"))
+   annotatedTopTab<- merge(x=geneAnots, y=topTab, by.x="PROBEID", by.y="PROBEID")
+   return(annotatedTopTab)
+   }
+```
+
+```{r echo=FALSE, results='hide', message=F, warning=F}
+# Usamos la funcion "annotatedTopTable":
+topAnnotated_NOSvsS.NS <- annotatedTopTable(topTab_NOSvsS.NS, anotPackage="hgu133plus2.db")
+
+topAnnotated_NOSvsS.LA <- annotatedTopTable(topTab_NOSvsS.LA, anotPackage="hgu133plus2.db")
+
+topAnnotated_INT <- annotatedTopTable(topTab_INT, anotPackage="hgu133plus2.db")
+
+write.csv(topAnnotated_NOSvsS.NS, file="./results/topAnnotated_NOSvsS.NS.csv")
+write.csv(topAnnotated_NOSvsS.LA, file="./results/topAnnotated_NOSvsS.LA.csv")
+write.csv(topAnnotated_INT, file="./results/topAnnotated_INT.csv")
+```
+
+```{r echo=FALSE, results='hide', message=F, warning=F}
+
+### Visualización de expresión diferencial ###
+
+library(hgu133plus2.db)
+```
+
+Estos gráficos de volcán, muestra la expresión diferencial global de los genes en las distintas comparaciones. También muestran los nombres de los 5 genes más diferencialmente expresados. Podemos ver que en todos ellos los genes más diferencialmente expresados son los mismos. También en todos ellos se observa como la tendencia de los genes mejor expresados diferencialmente es más amplia en los genes down-regulated (parte izquierda de la primera línea del gráfico) que en los genes down-regulated (parte derecha de la segunda línea del gráfico).
+
+```{r echo=FALSE, warning=F, message=FALSE}
+geneSymbols <- select(hgu133plus2.db, rownames(fit.main), c("SYMBOL"))
+SYMBOLS<- geneSymbols$SYMBOL
+volcanoplot(fit.main, coef=1, highlight=5, names=SYMBOLS, main=paste("Differentially expressed genes", colnames(cont.matrix)[1], sep="\n"))
+abline(v=c(-1,1))
+```
+_Fig 6. Diagrama de volcán de los genes diferencialmente expresados en la comparación entre pieles sensibles y no sensibles con aplicación de solución salina._
+
+
+
+
+```{r echo=FALSE, warning=F, message=FALSE}
+geneSymbols <- select(hgu133plus2.db, rownames(fit.main), c("SYMBOL"))
+SYMBOLS<- geneSymbols$SYMBOL
+volcanoplot(fit.main, coef=1, highlight=5, names=SYMBOLS, main=paste("Differentially expressed genes", colnames(cont.matrix)[2], sep="\n"))
+abline(v=c(-1,1))
+```
+_Fig 7. Diagrama de volcán de los genes diferencialmente expresados en la comparación entre pieles sensibles y no sensibles con aplicación de ácido láctico._
+
+
+
+
+
+```{r echo=FALSE, warning=F, message=FALSE}
+geneSymbols <- select(hgu133plus2.db, rownames(fit.main), c("SYMBOL"))
+SYMBOLS<- geneSymbols$SYMBOL
+volcanoplot(fit.main, coef=1, highlight=5, names=SYMBOLS, main=paste("Differentially expressed genes", colnames(cont.matrix)[3], sep="\n"))
+abline(v=c(-1,1))
+```
+_Fig 8. Diagrama de volcán de los genes diferencialmente expresados en la comparación entre genes con comportamientos distintos en las dos comparaciones anteriores._
+
+
+
+
+
+### Comparación entre distintas comparaciones:
+
+
+Para visualizar los genes diferencialmente expresados en las distintas comparaciones hechas, se ha creado un diagrama de Venn donde se muestran los genes diferencialmente expresados que hay en cada grupo de comparaciones y en común entre varias comparaciones.
+
+```{r echo=FALSE, results='hide', message=F, warning=F}
+
+#### 8. Comparación entre distintas comparaciones ####
+#(si hay más de una comparación, ver que genes han sido seleccionados en más de una comparación)
+
+library(limma)
+
+
+fit<-lmFit(eset_filtered, designMat)
+fit.main<-contrasts.fit(fit, cont.matrix)
+fit.main<-eBayes(fit.main)
+
+res <- decideTests(fit.main, method="separate", adjust.method="none", p.value=0.1, lfc=1)
+
+sum.res.rows<-apply(abs(res),1,sum)
+res.selected<-res[sum.res.rows!=0,] 
+print(summary(res))
+```
+```{r echo=FALSE}
+# Visualización en diagrama de Venn de los resultados anteriores:
+vennDiagram (res.selected[,1:3], cex=0.9)
+title("Genes in common between the three comparisons\n Genes selected with FDR < 0.1 and logFC > 1")
+```
+_Fig 9. Diagrama de Venn de los genes diferencialmente expresados en las tres comparaciones_
+
+
+
+
+
+### Análisis de significación biológica:
+
+
+Para este análisis, necesitamos un grupo menos restrictivo que en los análisis anteriores, por lo que aumentaremos el p-valor de los genes que considerar como diferencialmente expresados:
+
+```{r echo=FALSE, message=F, warning=F}
+
+#### 9. Análisis de significación biológica (“Gene Enrichment Analysis”) ####
+
+
+listOfTables <- list(NOSvsS.NS = topTab_NOSvsS.NS, NOSvsS.LA  = topTab_NOSvsS.LA,INT = topTab_INT)
+
+listOfSelected <- list()
+for (i in 1:length(listOfTables)){
+# select the toptable
+   topTab <- listOfTables[[i]]
+   # select the genes to be included in the analysis
+   whichGenes<-topTab["P.Value"]<0.15
+   selectedIDs <- rownames(topTab)[whichGenes]
+   # convert the ID to Entrez
+   EntrezIDs<- select(hgu133plus2.db, selectedIDs, c("ENTREZID"))
+   EntrezIDs <- EntrezIDs$ENTREZID
+   listOfSelected[[i]] <- EntrezIDs
+   names(listOfSelected)[i] <- names(listOfTables)[i]
+   }
+sapply(listOfSelected, length)
+```
+
+Los gráfico en red del análisis de significación biológica muestran los principales genes diferencialmente expresados y en que funciones biologicas están involucrados.
+
+```{r echo=FALSE, results='hide', message=F, warning=F}
+mapped_genes2GO <- mappedkeys(org.Hs.egGO)
+mapped_genes2KEGG <- mappedkeys(org.Hs.egPATH)
+mapped_genes <- union(mapped_genes2GO , mapped_genes2KEGG)
+```
+
+#### Comparación pieles no sensibles vs pieles sensibles con aplicación de solución salina:
+
+
+Para la comparación entre pieles sensibles y no sensibles cuando se les aplica una solución salina, los genes diferencialmente expresados, son aquellos que tienen su función en la contracción muscular y la contracción muscular estriada.
+
+```{r echo=FALSE, message=F, warning=F, results='hide'}
+library(ReactomePA)
+listOfData <- listOfSelected[1:2]
+comparisonsNames <- names(listOfData)
+universe <- mapped_genes
+
+# Primera comparación:
+
+for (i in 1:1){
+   genesIn <- listOfData[[i]]
+   comparison <- comparisonsNames[i]
+   enrich.result <- enrichPathway(gene = genesIn,
+                                  pvalueCutoff = 0.05,
+                                  readable = T,
+                                  pAdjustMethod = "none",
+                                  organism = "human",
+                                  universe = universe)
+   
+   cat("##################################")
+   cat("\nComparison: ", comparison,"\n")
+   print(head(enrich.result))
+ 
+   if (length(rownames(enrich.result@result)) != 0) {
+   write.csv(as.data.frame(enrich.result), 
+              file =paste0("./results/","ReactomePA.Results.",comparison,".csv"), 
+              row.names = FALSE)
+   
+   pdf(file=paste0("./results/","ReactomePABarplot.",comparison,".pdf"))
+     print(barplot(enrich.result, showCategory = 15, font.size = 4, 
+             title = paste0("Reactome Pathway Analysis for ", comparison,". Barplot")))
+   dev.off()
+   
+   pdf(file = paste0("./results/","ReactomePAcnetplot.",comparison,".pdf"))
+     print(cnetplot(enrich.result, categorySize = "geneNum", schowCategory = 15, 
+          vertex.label.cex = 0.75))
+   dev.off()
+   }
+ }
+```
+```{r echo=FALSE, message=F, warning=F}
+cnetplot(enrich.result, categorySize = "geneNum", schowCategory = 15, vertex.label.cex = 0.75)
+```
+_Fig 10. Diagrama de relación de funciones de los genes diferencialmente expresados en la comparación de piel sensible y no sensible con aplicación de solución salina._
+
+
+
+
+#### Comparación pieles no sensibles vs pieles sensibles con aplicación ácido láctico:
+
+
+En cambio, para la comparación entre pieles sensibles y no sensibles cuando se les aplica ácido láctico, los genes diferencialmente expresados, son aquellos que tienen su función en la translocación de ZAP-70 a sinapsis inmunologica, en la generación de segundas celulas mensajeras, en la señal de PD-1, en la fosforilación de la CD3 y las cadenas TCR y en los receptores de chemoquinas y sus puentes.
+
+```{r echo=FALSE, message=F, warning=F, results='hide'}
+
+# Segunda comparación:
+
+for (i in 2:2){
+   genesIn <- listOfData[[i]]
+   comparison <- comparisonsNames[i]
+   enrich.result <- enrichPathway(gene = genesIn,
+                                  pvalueCutoff = 0.05,
+                                  readable = T,
+                                  pAdjustMethod = "none",
+                                  organism = "human",
+                                  universe = universe)
+   
+   cat("##################################")
+   cat("\nComparison: ", comparison,"\n")
+   print(head(enrich.result))
+ 
+   if (length(rownames(enrich.result@result)) != 0) {
+   write.csv(as.data.frame(enrich.result), 
+              file =paste0("./results/","ReactomePA.Results.",comparison,".csv"), 
+              row.names = FALSE)
+   
+   pdf(file=paste0("./results/","ReactomePABarplot.",comparison,".pdf"))
+     print(barplot(enrich.result, showCategory = 15, font.size = 4, 
+             title = paste0("Reactome Pathway Analysis for ", comparison,". Barplot")))
+   dev.off()
+   
+   pdf(file = paste0("./results/","ReactomePAcnetplot.",comparison,".pdf"))
+     print(cnetplot(enrich.result, categorySize = "geneNum", schowCategory = 15, 
+          vertex.label.cex = 0.75))
+   dev.off()
+   }
+ }
+```
+
+```{r echo=FALSE, message=F, warning=F}
+cnetplot(enrich.result, categorySize = "geneNum", schowCategory = 15, vertex.label.cex = 0.75)
+```
+_Fig 11. Diagrama de relación de funciones de los genes diferencialmente expresados en la comparación de piel sensible y no sensible con aplicación de ácido láctico._
+
+
+
+
+## Discusión
+
+El único punto clave a tener en cuenta en cuanto a la interpretación de estos resultados, es la figura 3, en los que se observa mucha dispersión de los datos entre grupos, por lo que habría que revisar si los resultados son debido a una mala manipulación de las muestras o a un mal etiquetado, porque sino los demás resultados podrían no ser fiables. 
+
+
+## Bibliografía
+
+(1) Gonzalo Sanz, Ricardo, and Alex Sánchez-Pla. 2019. _“Statistical Analysis of Microarray Data.”_ In Microarray Bioinformatics, edited by Verónica Bolón-Canedo and Amparo Alonso-Betanzos, 87–121. New York, NY: Springer New York. https://doi.org/10.1007/978-1-4939-9442-7_5.
+
+(2) Kim EJ, Lee DH, Kim YK, Kim MK et al. _"Decreased ATP synthesis and lower pH may lead to abnormal muscle contraction and skin sensitivity in human skin"_. J Dermatol Sci 2014 Dec;76(3):214-21. PMID: 25450093.
+
+(3) Irizarry, Rafael A., Bridget Hobbs, Francois Collin, Yasmin D. Beazer‐Barclay, Kristen J. Antonellis, Uwe Scherf, and Terence P. Speed. 2003. _“Exploration, Normalization, and Summaries of High Density Oligonucleotide Array Probe Level Data.”_ Biostatistics 4 (2): 249–64. https://doi.org/10.1093/biostatistics/4.2.249.
+
+
+(4) Benjamini, Yoav, and Yosef Hochberg. 1995. _“Controlling the False Discovery Rate: A Practical and Powerful Approach to Multiple Testing.”_ Source Journal of the Royal Statistical Society. Series B (Methodological) 57 (1): 289–300. http://www.jstor.org/stable/2346101 http://www.jstor.org/ http://www.jstor.org/action/showPublisher?publisherCode=black.
+
+
+
+## Apéndice
+
+```{r eval=FALSE}
+## OBTENCIÓN DE DATOS:
+
+# En primer lugar crearemos dos directorios, uno para los datos y otro para los resultados,
+# tal y como recomiendan Gonzalo y Sanchez-Pla (2019) para no mezclar datos.
+dir.create("data")
+dir.create("results")
+```
+
+```{r eval=FALSE}
+# Paquetes usados en este análisis:
+library(GEOquery)
+library(BiocManager)
+library(knitr)
+library(colorspace)
+library(gplots)
+library(ggplot2)
+library(ggrepel)
+library(htmlTable)
+library(prettydoc)
+library(pd.hg.u133.plus.2)
+library(oligo)
+library(GEOquery)
+library(Biobase)
+library(arrayQualityMetrics)
+library(genefilter)
+library(mogene21sttranscriptcluster.db)
+library(AnnotationDbi)
+library(org.Mm.eg.db)
+library(limma)
+library(AnnotationDbi)
+library(org.Hs.eg.db)
+library(hgu133plus2.db)
+library(ReactomePA)
+```
+
+
+
+### 1. Identificar que grupos hay y a qué grupo pertenece cada muestra
+
+```{r eval=FALSE}
+# Leemos el archivo "targets" creado con los datos ".CEL":
+targets <- read.csv2("C:/Users/Sara/Documents/UOC/GitHub/Análisis de datos +
+                     Ómicos/data/target.csv", +
+                       header = TRUE, sep = ";") 
+```
+
+```{r eval=FALSE}
+# Leemos el archivo "targets" creado con los datos ".CEL":
+targets <- read.csv2("C:/Users/Sara/Documents/UOC/GitHub/Análisis de datos +
+                     Ómicos/data/target.csv", +
+                       header = TRUE, sep = ";") 
+```
+
+```{r eval=FALSE}
+# Los datos en bruto se almacenan en una variable (rawData) para poderlos tratar 
+# con el paquete "oligo" de R:
+celFiles <- list.celfiles("./data", full.names = TRUE)
+my.targets <-read.AnnotatedDataFrame(file.path("./data","target.csv"), +
+                                       header = TRUE, +
+                                       row.names = 1, +
+                                       sep=";") # ExpresionSet
+
+rawData <- read.celfiles(celFiles, phenoData = my.targets)
+
+# Cambiamos las etiquetas de las muestras a los "ShortNames":
+my.targets@data$ShortName->rownames(pData(rawData))
+colnames(rawData) <-rownames(pData(rawData)) 
+head(rawData)
+```
+
+
+
+### 2. Control de calidad de los datos crudos
+
+```{r eval=FALSE}
+# Se crea una carpeta para los resultados de "rawData":
+arrayQualityMetrics(rawData, force = TRUE)
+
+
+# Función creada por "Gonzalo, Ricardo y Sanchez-Pla, Alex (2019)" para un 
+# análisis más completo:
+plotPCA3 <- function (datos, labels, factor, title, scale,colores, +
+                        size = 1.5, +
+                        glineas = 0.25) {
+   data <- prcomp(t(datos),scale=scale)
+   # plot adjustments
+   dataDf <- data.frame(data$x)
+   Group <- factor
+   loads <- round(data$sdev^2/sum(data$sdev^2)*100,1)
+   # main plot
+   p1 <- ggplot(dataDf,aes(x=PC1, y=PC2)) +
+     theme_classic() + 
+     geom_hline(yintercept = 0, color = "gray70") +
+     geom_vline(xintercept = 0, color = "gray70") +
+     geom_point(aes(color = Group), alpha = 0.55, size = 3) +
+     coord_cartesian(xlim = c(min(data$x[,1])-5,max(data$x[,1])+5)) +
+     scale_fill_discrete(name = "Group")
+   # avoiding labels superposition
+   p1 + geom_text_repel(aes(y = PC2 + 0.25, label = labels),+
+                          segment.size = 0.25, size = size) + 
+     labs(x = c(paste("PC1",loads[1],"%")), +
+            y=c(paste("PC2",loads[2],"%"))) +
+     ggtitle(paste("Principal Component Analysis for: ",title,sep=" ")) + 
+     theme(plot.title = element_text(hjust = 0.5)) + 
+     scale_color_manual(values=colores)
+   }
+   }
+```
+
+```{r eval=FALSE}
+# Empleamos la función "plotPCA3" para nuestro análisis:
+plotPCA3(exprs(rawData), labels = targets$ShortName, factor = targets$Group, +
+           title="Raw data", scale = FALSE, +
+           size = 3, colores = c("red", "blue", "green", "yellow"))
+```
+
+```{r eval=FALSE}
+# Diagrama de caja que muestra las intensidades de los arrays:
+boxplot(rawData, cex.axis=0.5, las=2,  which="all", col = c(rep("red", 3), +
+                                                              rep("blue", 3), +
+                                                              rep("green", 3), +
+                                                              rep("yellow", 3)), +
+          main="Distribution of raw intensity values")
+```
+
+
+
+### 3. Normalización
+
+```{r eval=FALSE}
+# Metodo "Robust Multichip Analysis Irizarry et al. (2003)" para la normalización:
+eset_rma <- rma(rawData)
+```
+
+
+
+### 4. Control de calidad de los datos normalizados
+
+```{r eval=FALSE}
+
+
+# Control de calidad con los datos normalizados:
+arrayQualityMetrics(eset_rma, outdir = file.path("./results", "QCDir.Norm"), force=TRUE)
+
+
+plotPCA3(exprs(eset_rma), labels = targets$ShortName, factor = targets$Group, +
+           title="Normalized data", scale = FALSE, size = 3, +
+           colores = c("red", "blue", "green", "yellow"))
+
+
+
+# Diagrama de caja múltiple para comprobar la normalización:
+boxplot(eset_rma, cex.axis=0.5, las=2,  which="all", col = c(rep("red", 3), +
+                                                               rep("blue", 3), +
+                                                               rep("green", 3), +
+                                                               rep("yellow", 3)), +
+          main="Boxplot for arrays intensity: Normalized Data")
+```
+
+```{r eval=FALSE}
+# Distribución de la variabilidad de los genes:
+sds <- apply (exprs(eset_rma), 1, sd)
+sdsO<- sort(sds)
+
+
+plot(1:length(sdsO), sdsO, main="Distribution of variability for all genes", +
+       sub="Vertical lines represent 90% and 95% percentiles", +
+       xlab="Gene index (from least to most variable)", +
+       ylab="Standard deviation")
+abline(v=length(sds)*c(0.9,0.95))
+```
+
+
+
+
+### 5. Filtraje no específico
+
+```{r eval=FALSE}
+# Se escoje la base de datos de la que depende este análisis de arrays:
+annotation(eset_rma) <- "hgu133plus2.db"
+
+# Se filtran los datos:
+filtered <- nsFilter(eset_rma, 
+                     require.entrez = TRUE, remove.dupEntrez = TRUE,
+                     var.filter=TRUE, var.func=IQR, var.cutoff=0.75, 
+                     filterByQuantile=TRUE, feature.exclude = "^AFFX")
+
+
+# Para mostrar que es lo que se ha filtrado:
+print(filtered$filter.log)
+
+# Guardamos los datos del filtrado:
+eset_filtered <-filtered$eset
+
+write.csv(exprs(eset_rma), file="./results/normalized.Data.csv")
+write.csv(exprs(eset_filtered), file="./results/normalized.Filtered.Data.csv")
+save(eset_rma, eset_filtered, file="./results/normalized.Data.Rda")
+```
+
+
+
+### 6. Identificación de genes diferencialmente expresados
+
+#### Matriz de contrastes:
+
+```{r eval=FALSE}
+
+# Diseño de la matriz:
+if (!exists("eset_filtered")) load (file="./results/normalized.Data.Rda")
+
+designMat<- model.matrix(~0+Group, pData(eset_filtered))
+colnames(designMat) <- c("NOS.NS", "NOS.LA", "S.NS", "S.LA")
+print(designMat)
+```
+
+```{r eval=FALSE}
+# Diseño de la matriz de contrastes:
+cont.matrix <- makeContrasts (NOSvsS.NS = NOS.NS-S.NS, NOSvsS.LA = NOS.LA-S.LA, +
+                                INT = (NOS.NS-S.NS) - (NOS.LA-S.LA), +
+                                levels=designMat)
+print(cont.matrix)
+```
+
+#### Estimación del modelo:
+
+```{r eval=FALSE}
+
+# Método de Benjamini y Hochberg Benjamini y Hochberg (1995) para el control 
+# sobre los falsos positivos:
+
+fit<-lmFit(eset_filtered, designMat)
+fit.main<-contrasts.fit(fit, cont.matrix)
+fit.main<-eBayes(fit.main)
+class(fit.main)
+
+```
+
+```{r eval=FALSE}
+
+# Comparación NOSvsS.NS:
+topTab_NOSvsS.NS <- topTable (fit.main, number=nrow(fit.main), coef="NOSvsS.NS", +
+                                adjust="fdr") 
+head(topTab_NOSvsS.NS)
+
+# Comparación NOSvsS.LA:
+topTab_NOSvsS.LA <- topTable (fit.main, number=nrow(fit.main), coef="NOSvsS.LA", +
+                                adjust="fdr") 
+head(topTab_NOSvsS.LA)
+
+# Comparación INT:
+topTab_INT <- topTable (fit.main, number=nrow(fit.main), coef="INT", +
+                          adjust="fdr") 
+head(topTab_INT)
+
+```
+
+
+
+### 7. Anotación de los resultados
+
+
+```{r eval=FALSE}
+
+### Anotación de genes ###
+
+# Función que anota todo en una tabla:
+annotatedTopTable <- function(topTab, anotPackage)
+   {
+   topTab <- cbind(PROBEID=rownames(topTab), topTab)
+   myProbes <- rownames(topTab)
+   thePackage <- eval(parse(text = anotPackage))
+   geneAnots <- select(thePackage, myProbes, c("SYMBOL", "ENTREZID", "GENENAME"))
+   annotatedTopTab<- merge(x=geneAnots, y=topTab, by.x="PROBEID", by.y="PROBEID")
+   return(annotatedTopTab)
+   }
+```
+
+```{r eval=FALSE}
+# Usamos la funcion "annotatedTopTable" para anotar los resultados de las 
+# comparaciones en tablas:
+
+topAnnotated_NOSvsS.NS <- annotatedTopTable(topTab_NOSvsS.NS, +
+                                              anotPackage="hgu133plus2.db")
+
+topAnnotated_NOSvsS.LA <- annotatedTopTable(topTab_NOSvsS.LA, +
+                                              anotPackage="hgu133plus2.db")
+
+topAnnotated_INT <- annotatedTopTable(topTab_INT, anotPackage="hgu133plus2.db")
+
+write.csv(topAnnotated_NOSvsS.NS, file="./results/topAnnotated_NOSvsS.NS.csv")
+write.csv(topAnnotated_NOSvsS.LA, file="./results/topAnnotated_NOSvsS.LA.csv")
+write.csv(topAnnotated_INT, file="./results/topAnnotated_INT.csv")
+```
+
+```{r eval=FALSE}
+
+### Visualización de expresión diferencial ###
+
+# Gráficos volcán de los genes diferencialmente expresados #
+
+## Comparación NOSvsS.NS:
+geneSymbols <- select(hgu133plus2.db, rownames(fit.main), c("SYMBOL"))
+SYMBOLS<- geneSymbols$SYMBOL
+volcanoplot(fit.main, coef=1, highlight=5, names=SYMBOLS, +
+              main=paste("Differentially expressed genes", +
+                           colnames(cont.matrix)[1], sep="\n"))
+abline(v=c(-1,1))
+
+
+## Comparación NOSvsS.LA:
+geneSymbols <- select(hgu133plus2.db, rownames(fit.main), c("SYMBOL"))
+SYMBOLS<- geneSymbols$SYMBOL
+volcanoplot(fit.main, coef=1, highlight=5, names=SYMBOLS, +
+              main=paste("Differentially expressed genes", +
+                           colnames(cont.matrix)[2], sep="\n"))
+abline(v=c(-1,1))
+
+
+## Comparación INT:
+geneSymbols <- select(hgu133plus2.db, rownames(fit.main), c("SYMBOL"))
+SYMBOLS<- geneSymbols$SYMBOL
+volcanoplot(fit.main, coef=1, highlight=5, names=SYMBOLS, +
+              main=paste("Differentially expressed genes", +
+                           colnames(cont.matrix)[3], sep="\n"))
+abline(v=c(-1,1))
+```
+
+
+
+### 8. Comparación entre distintas comparaciones
+
+```{r eval=FALSE}
+
+# Creamos un modelo para escoger solo los genes diferencialmente expresados con un 
+# p-valor del 10%:
+fit<-lmFit(eset_filtered, designMat)
+fit.main<-contrasts.fit(fit, cont.matrix)
+fit.main<-eBayes(fit.main)
+
+res <- decideTests(fit.main, method="separate", adjust.method="none", +
+                     p.value=0.1, lfc=1)
+
+sum.res.rows<-apply(abs(res),1,sum)
+res.selected<-res[sum.res.rows!=0,] 
+print(summary(res))
+```
+
+```{r eval=FALSE}
+# Visualización en diagrama de Venn de los resultados anteriores:
+vennDiagram (res.selected[,1:3], cex=0.9)
+title("Genes in common between the three comparisons\n +
+      Genes selected with FDR < 0.1 and logFC > 1")
+```
+
+
+
+
+### 9. Análisis de significación biológica
+
+```{r eval=FALSE}
+
+
+# Creamos un modelo menos restrictivo en p-valor de los genes diferencialmente expresados:
+
+listOfTables <- list(NOSvsS.NS = topTab_NOSvsS.NS, NOSvsS.LA  = topTab_NOSvsS.LA,+
+                       INT = topTab_INT)
+
+listOfSelected <- list()
+for (i in 1:length(listOfTables)){
+# select the toptable
+   topTab <- listOfTables[[i]]
+   # select the genes to be included in the analysis
+   whichGenes<-topTab["P.Value"]<0.15
+   selectedIDs <- rownames(topTab)[whichGenes]
+   # convert the ID to Entrez
+   EntrezIDs<- select(hgu133plus2.db, selectedIDs, c("ENTREZID"))
+   EntrezIDs <- EntrezIDs$ENTREZID
+   listOfSelected[[i]] <- EntrezIDs
+   names(listOfSelected)[i] <- names(listOfTables)[i]
+   }
+sapply(listOfSelected, length)
+
+# Mapeamos las caracteristicas de los gráficos:
+mapped_genes2GO <- mappedkeys(org.Hs.egGO)
+mapped_genes2KEGG <- mappedkeys(org.Hs.egPATH)
+mapped_genes <- union(mapped_genes2GO , mapped_genes2KEGG)
+```
+
+```{r eval=FALSE}
+
+# Se ha usado el paquete ReactomePA ante la incompatibilidad de los resultados 
+#con otros paquetes más recientes como clusterProfiler.
+library(ReactomePA)
+
+listOfData <- listOfSelected[1:2]
+comparisonsNames <- names(listOfData)
+universe <- mapped_genes
+
+# Primera comparación:
+
+for (i in 1:1){
+   genesIn <- listOfData[[i]]
+   comparison <- comparisonsNames[i]
+   enrich.result <- enrichPathway(gene = genesIn,
+                                  pvalueCutoff = 0.05,
+                                  readable = T,
+                                  pAdjustMethod = "none",
+                                  organism = "human",
+                                  universe = universe)
+   
+   cat("##################################")
+   cat("\nComparison: ", comparison,"\n")
+   print(head(enrich.result))
+ 
+   if (length(rownames(enrich.result@result)) != 0) {
+   write.csv(as.data.frame(enrich.result), 
+              file =paste0("./results/","ReactomePA.Results.",comparison,".csv"), 
+              row.names = FALSE)
+   
+   pdf(file=paste0("./results/","ReactomePABarplot.",comparison,".pdf"))
+     print(barplot(enrich.result, showCategory = 15, font.size = 4, 
+             title = paste0("Reactome Pathway Analysis for ", comparison,". Barplot")))
+   dev.off()
+   
+   pdf(file = paste0("./results/","ReactomePAcnetplot.",comparison,".pdf"))
+     print(cnetplot(enrich.result, categorySize = "geneNum", schowCategory = 15, 
+          vertex.label.cex = 0.75))
+   dev.off()
+   }
+ }
+
+
+cnetplot(enrich.result, categorySize = "geneNum", +
+           schowCategory = 15, +
+           vertex.label.cex = 0.75)
+```
+
+```{r eval=FALSE}
+
+# Segunda comparación:
+
+for (i in 2:2){
+   genesIn <- listOfData[[i]]
+   comparison <- comparisonsNames[i]
+   enrich.result <- enrichPathway(gene = genesIn,
+                                  pvalueCutoff = 0.05,
+                                  readable = T,
+                                  pAdjustMethod = "none",
+                                  organism = "human",
+                                  universe = universe)
+   
+   cat("##################################")
+   cat("\nComparison: ", comparison,"\n")
+   print(head(enrich.result))
+ 
+   if (length(rownames(enrich.result@result)) != 0) {
+   write.csv(as.data.frame(enrich.result), 
+              file =paste0("./results/","ReactomePA.Results.",comparison,".csv"), 
+              row.names = FALSE)
+   
+   pdf(file=paste0("./results/","ReactomePABarplot.",comparison,".pdf"))
+     print(barplot(enrich.result, showCategory = 15, font.size = 4, 
+             title = paste0("Reactome Pathway Analysis for ", comparison,". Barplot")))
+   dev.off()
+   
+   pdf(file = paste0("./results/","ReactomePAcnetplot.",comparison,".pdf"))
+     print(cnetplot(enrich.result, categorySize = "geneNum", schowCategory = 15, 
+          vertex.label.cex = 0.75))
+   dev.off()
+   }
+ }
+
+
+cnetplot(enrich.result, categorySize = "geneNum", +
+           schowCategory = 15, +
+           vertex.label.cex = 0.75)
+```
