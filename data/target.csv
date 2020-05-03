@@ -1,0 +1,13 @@
+FileName;Group;Genotype;Treatment;ShortName
+GSM1180053_non-sensitive_NS_set1.CEL;NOS.NS;NOS;NS;NOS.NS.1
+GSM1180054_non-sensitive_NS_set2.CEL;NOS.NS;NOS;NS;NOS.NS.2
+GSM1180055_non-sensitive_NS_set3.CEL;NOS.NS;NOS;NS;NOS.NS.3
+GSM1180056_non-sensitive_LA_set1.CEL;NOS.LA;NOS;LA;NOS.LA.1
+GSM1180057_non-sensitive_LA_set2.CEL;NOS.LA;NOS;LA;NOS.LA.2
+GSM1180058_non-sensitive_LA_set3.CEL;NOS.LA;NOS;LA;NOS.LA.3
+GSM1180059_sensitive_NS_set1.CEL;S.NS;S;NS;S.NS.1
+GSM1180060_sensitive_NS_set2.CEL;S.NS;S;NS;S.NS.2
+GSM1180061_sensitive_NS_set3.CEL;S.NS;S;NS;S.NS.3
+GSM1180062_sensitive_LA_set1.CEL;S.LA;S;LA;S.LA.1
+GSM1180063_sensitive_LA_set2.CEL;S.LA;S;LA;S.LA.2
+GSM1180064_sensitive_LA_set3.CEL;S.LA;S;LA;S.LA.3
